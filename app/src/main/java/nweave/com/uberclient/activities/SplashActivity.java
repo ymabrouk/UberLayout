@@ -1,12 +1,16 @@
 package nweave.com.uberclient.activities;
 
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.support.constraint.ConstraintLayout;
 import android.text.TextUtils;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.FrameLayout;
 
 import com.firebase.ui.auth.AuthUI;
 import com.google.android.gms.common.Scopes;
@@ -20,6 +24,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import butterknife.BindView;
+import butterknife.ButterKnife;
 import nweave.com.uberclient.BuildConfig;
 import nweave.com.uberclient.R;
 import nweave.com.uberclient.util.Constants;
@@ -31,11 +37,16 @@ public class SplashActivity extends BaseActivity {
     private static final int RC_SIGN_IN = 65535;
     private Handler mWaitHandler = new Handler();
 
+
+    @BindView(R.id.splash_root_view)
+    ConstraintLayout rootFrame;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_splash);
-
+        ButterKnife.bind(this);
         FirebaseApp.initializeApp(this);
 
         // sign-out
@@ -78,7 +89,7 @@ public class SplashActivity extends BaseActivity {
         if (firebaseUser == null || TextUtils.isEmpty(firebaseUser.getUid())) {
             attemptUserLoginViaFirebase();
         } else {
-            launchActivity(MainActivity.class);
+            launchMainActivity();
             finish();
         }
     }
@@ -131,7 +142,7 @@ public class SplashActivity extends BaseActivity {
                     RC_SIGN_IN);
 
         } else {
-            showNetworkError();
+           // showNetworkError();
         }
     }
 
@@ -144,14 +155,31 @@ public class SplashActivity extends BaseActivity {
                 if (resultCode == RESULT_OK) {
                     String uid = FirebaseAuth.getInstance().getUid();
                     SharedValues.saveValue(this, Constants.USER_UID, uid);
-                   launchActivity(MainActivity.class);
+                    launchMainActivity();
                 } else {
-                    showSnackBar(getString(R.string.firebase_auth_failed));
+                    // showSnackBar(getString(R.string.firebase_auth_failed));
                 }
                 break;
         }
     }
 
+    @Override
+    protected void setUpPolyLine() {
+
+    }
+
+    private void launchMainActivity() {
+        rootFrame.setAlpha(0.8f);
+        launchActivity(MainActivity.class);
+//        new Handler().postDelayed(new Runnable() {
+//            @Override
+//            public void run() {
+//
+//            }
+//        }, 1000);
+
+        finish();
+    }
 
 
     @Override
