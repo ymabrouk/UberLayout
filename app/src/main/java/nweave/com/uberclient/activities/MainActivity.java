@@ -3,6 +3,7 @@ package nweave.com.uberclient.activities;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ArgbEvaluator;
+import android.content.Intent;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
@@ -15,6 +16,8 @@ import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.widget.Toolbar;
 import android.transition.TransitionManager;
 import android.util.DisplayMetrics;
+import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -27,15 +30,33 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.gson.Gson;
+import com.google.maps.DirectionsApi;
+import com.google.maps.GeoApiContext;
+import com.google.maps.errors.ApiException;
+import com.google.maps.model.DirectionsResult;
+import com.google.maps.model.LatLng;
+import com.google.maps.model.TrafficModel;
+import com.google.maps.model.TravelMode;
+
+import com.flipboard.bottomsheet.BottomSheetLayout;
+import com.google.android.gms.common.api.Status;
+import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.ui.PlaceAutocomplete;
+import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.SupportMapFragment;
-import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.CameraPosition;
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import org.joda.time.DateTime;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
+import java.text.DecimalFormat;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -73,12 +94,31 @@ public class MainActivity extends BaseActivity
     @BindView(R.id.ivHome)
     ImageView ivHome;
 
-    @BindView(R.id.tvWhereTo)
+    @BindView(R.id.tvWhere)
     TextView tvWhereto;
 
     ArgbEvaluator argbEvaluator;
 
-    private LatLng destination;
+
+    @BindView(R.id.lt_book_ride)
+    LinearLayout bookLayout;
+    private LatLng destinationLocation;
+    private LatLng pickupLocation;
+
+
+
+    @BindView(R.id.tv_pickup_location_text)
+    TextView tv_pickup_location_text;
+
+    @BindView(R.id.tv_dropoff_location_text)
+    TextView tv_dropoff_location_text;
+
+
+    private DirectionsResult mDirectionsResult = null;
+
+
+
+//    private LatLng destination;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,6 +168,25 @@ public class MainActivity extends BaseActivity
         viewPager.setPageTransformer(true, pageTransformer);
 
 
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == PLACE_AUTOCOMPLETE_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                Place place = PlaceAutocomplete.getPlace(this, data);
+                tvWhereto.setText(place.getAddress());
+                destination = place.getLatLng();
+                setUpPolyLine();
+
+            } else if (resultCode == PlaceAutocomplete.RESULT_ERROR) {
+                Status status = PlaceAutocomplete.getStatus(this, data);
+                Toast.makeText(this, "Error " + status, Toast.LENGTH_SHORT).show();
+
+            } else if (resultCode == RESULT_CANCELED) {
+                // The user canceled the operation.
+            }
+        }
     }
 
     ViewPager.PageTransformer pageTransformer = new ViewPager.PageTransformer() {
@@ -188,7 +247,34 @@ public class MainActivity extends BaseActivity
 
         @Override
         public void onPageSelected(int position) {
+            Toast.makeText(getApplicationContext(), "You selected .... " , Toast.LENGTH_LONG ).show();
+            TransitionManager.beginDelayedTransition(rootFrame);
+            bookLayout.setVisibility(View.VISIBLE);
+            viewPager.setVisibility(View.INVISIBLE);
+            ivHome.setVisibility(View.INVISIBLE);
+            rlWhere.setVisibility(View.INVISIBLE);
 
+
+
+            //Get and set data about Distance & Time required between source --> destination
+            DecimalFormat df = new DecimalFormat("#.##");
+            String formattedDistance = df.format(getDistanceInMiles());
+
+            ((TextView) bookLayout.findViewById(R.id.tv_distance)).setText(formattedDistance + " miles");
+            ((TextView) bookLayout.findViewById(R.id.tv_time)).setText(getTimeRequired());
+
+            if(getDistanceInMiles() > 0) {
+                float amount = getDistanceInMiles() * 1; //distance * rate/perMile
+                String formattedAmount = df.format(amount);
+
+                ((TextView) bookLayout.findViewById(R.id.tv_amount)).setText(String.format(getString(R.string.amount), formattedAmount));
+            } else {
+                ((TextView) bookLayout.findViewById(R.id.tv_amount)).setText("");
+            }
+
+
+            tv_pickup_location_text.setText("Current Location");
+            tv_dropoff_location_text.setText(tvWhereto.getText());
         }
 
         @Override
@@ -204,7 +290,7 @@ public class MainActivity extends BaseActivity
         viewPager.setVisibility(View.VISIBLE);
         ivHome.setVisibility(View.INVISIBLE);
         rlWhere.setVisibility(View.INVISIBLE);
-
+        bookLayout.setVisibility(View.INVISIBLE);
         mMap.setPadding(0, 0, 0, viewPager.getHeight());
 
     }
@@ -234,7 +320,7 @@ public class MainActivity extends BaseActivity
             @Override
             public void onAnimationEnd(Animator animation) {
                 super.onAnimationEnd(animation);
-
+                bookLayout.setVisibility(View.INVISIBLE);
                 rlWhere.setVisibility(View.VISIBLE);
                 ivHome.setVisibility(View.VISIBLE);
             }
@@ -260,12 +346,88 @@ public class MainActivity extends BaseActivity
 
     }
 
+    private GeoApiContext getGeoApiContext() {
+        GeoApiContext.Builder builder = new GeoApiContext.Builder();
+        builder.apiKey(getString(R.string.google_maps_key));
+        builder.queryRateLimit(3);
+        return builder.build();
+    }
+    
+
+    //https://android.jlelse.eu/google-maps-directions-api-5b2e11dee9b0
+    private void getDirectionsApiResult() {
+        DateTime now = new DateTime();
+        try {
+
+            mDirectionsResult = DirectionsApi.newRequest(getGeoApiContext())
+                    .mode(TravelMode.DRIVING)
+                    .origin(pickupLocation)
+                    .destination(destinationLocation)
+                    .departureTime(now)
+                    .trafficModel(TrafficModel.BEST_GUESS)
+                    .await();
+
+            try {
+                Log.d("", "mDirectionsResult  " + (new JSONObject(new Gson().toJson(mDirectionsResult)).toString(3)));
+            } catch(Exception e) {
+                Log.e("", "mDirectionsResult  ", e);
+            }
+
+        } catch (ApiException e) {
+            Log.e("", "ApiException" ,e);
+        } catch (InterruptedException e) {
+            Log.e("", "InterruptedException" ,e);
+        } catch (IOException e) {
+            Log.e("", "IOException" ,e);
+        } catch (Exception e) {
+            Log.e("", "Exception" ,e);
+        }
+    }
+
+    private float getDistanceInMiles() {
+        try {
+            if (mDirectionsResult != null) {
+                long meters = mDirectionsResult.routes[0].legs[0].distance.inMeters;
+                double inches = (39.370078 * meters);
+                float miles = (float) (inches / 63360);
+                return miles;
+            }
+        } catch(ArrayIndexOutOfBoundsException e) {
+            Log.e("", "getDistanceRequired : " + e.getMessage());
+        }
+        return -1;
+    }
+
+    private String getTimeRequired() {
+        //Log.d("","getTimeRequired  " +mDirectionsResult);
+        try {
+            if(mDirectionsResult != null) {
+                return mDirectionsResult.routes[0].legs[0].duration.humanReadable;
+            }
+        } catch(ArrayIndexOutOfBoundsException e) {
+            Log.e("", "getTimeRequired : " + e.getMessage());
+        }
+        return null;
+    }
+
+    private long getTimeInSecs() {
+        //Log.d("","getTimeRequired  " +mDirectionsResult);
+        try {
+            if(mDirectionsResult != null) {
+                return mDirectionsResult.routes[0].legs[0].duration.inSeconds;
+            }
+        } catch(ArrayIndexOutOfBoundsException e) {
+            Log.e("", "getTimeRequired : " + e.getMessage());
+        }
+        return -1;
+    }
+
     @Override
     protected void setUpPolyLine() {
 
-        LatLng source = new LatLng(getUserLocation().getLatitude(), getUserLocation().getLongitude());
-        LatLng destination = getDestinationLatLong();
-        if (source != null &&   destination != null) {
+        pickupLocation = new LatLng(getUserLocation().getLatitude(), getUserLocation().getLongitude());
+        destinationLocation = new LatLng(getDestinationLatLong().latitude, getDestinationLatLong().longitude); ;
+        if (pickupLocation != null &&   destinationLocation != null) {
 
             Retrofit retrofit = new Retrofit.Builder()
                     .baseUrl("https://maps.googleapis.com/maps/api/directions/")
@@ -274,7 +436,7 @@ public class MainActivity extends BaseActivity
 
             getPolyline polyline = retrofit.create(getPolyline.class);
 
-            polyline.getPolylineData(source.latitude + "," + source.longitude, destination.latitude + "," + destination.longitude)
+            polyline.getPolylineData(pickupLocation.lat + "," + pickupLocation.lng, destinationLocation.lat + "," + destinationLocation.lng)
                     .enqueue(new Callback<JsonObject>() {
                         @Override
                         public void onResponse(@NonNull Call<JsonObject> call, @NonNull Response<JsonObject> response) {
@@ -289,7 +451,13 @@ public class MainActivity extends BaseActivity
                                             @Override
                                             public void accept(List<List<HashMap<String, String>>> lists) throws Exception {
 
-                                                drawPolyline(lists);
+                                                try{
+                                                    drawPolyline(lists);
+                                                    getDirectionsApiResult();
+                                                } catch (Exception e){
+                                                    Log.d("", e.getMessage());
+                                                }
+
                                             }
                                         });
 
@@ -326,6 +494,18 @@ public class MainActivity extends BaseActivity
             rlWhere.setVisibility(View.VISIBLE);
             return;
         }
+
+
+        if (bookLayout.getVisibility() == View.VISIBLE) {
+
+            TransitionManager.beginDelayedTransition(rootFrame);
+            bookLayout.setVisibility(View.INVISIBLE);
+            mMap.setPadding(0, 0, 0, 0);
+            ivHome.setVisibility(View.VISIBLE);
+            rlWhere.setVisibility(View.VISIBLE);
+            return;
+        }
+
         DrawerLayout drawer = (DrawerLayout) findViewById(R.id.drawer_layout);
         if (drawer.isDrawerOpen(GravityCompat.START)) {
             drawer.closeDrawer(GravityCompat.START);

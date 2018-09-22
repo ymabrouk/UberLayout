@@ -171,13 +171,6 @@ public class SplashActivity extends BaseActivity {
     private void launchMainActivity() {
         rootFrame.setAlpha(0.8f);
         launchActivity(MainActivity.class);
-//        new Handler().postDelayed(new Runnable() {
-//            @Override
-//            public void run() {
-//
-//            }
-//        }, 1000);
-
         finish();
     }
 

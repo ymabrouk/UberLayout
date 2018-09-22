@@ -20,4 +20,13 @@
     <string name="history">history</string>
     <string name="user_profile">user_profile</string>
 
+
+    <string name="book_ride">BOOK RIDE</string>
+    <string name="book_another_ride">BOOK ANOTHER RIDE</string>
+    <string name="find_driver">Connecting you to nearest driver</string>
+    <string name="amount">$%1$s</string>
+    <string name="estimated_fare">Estimated Fare</string>
+    <string name="share_trip">Share Trip</string>
+
+
 </resources>

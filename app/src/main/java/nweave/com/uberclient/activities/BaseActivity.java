@@ -18,22 +18,28 @@ import android.net.NetworkInfo;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.RequiresPermission;
-import android.support.design.widget.CoordinatorLayout;
-import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
-import android.view.View;
+import android.util.Log;
 import android.view.animation.LinearInterpolator;
 import android.widget.Toast;
 
+import com.android.volley.Cache;
+import com.android.volley.Network;
+import com.android.volley.Request;
+import com.android.volley.RequestQueue;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.toolbox.BasicNetwork;
+import com.android.volley.toolbox.DiskBasedCache;
+import com.android.volley.toolbox.HurlStack;
+import com.android.volley.toolbox.JsonObjectRequest;
 import com.google.android.gms.common.GooglePlayServicesNotAvailableException;
 import com.google.android.gms.common.GooglePlayServicesRepairableException;
-import com.google.android.gms.common.api.Status;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
-import com.google.android.gms.location.places.Place;
 import com.google.android.gms.location.places.ui.PlaceAutocomplete;
+import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -42,11 +48,13 @@ import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.GroundOverlay;
 import com.google.android.gms.maps.model.GroundOverlayOptions;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.MapStyleOptions;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.gms.maps.model.SquareCap;
+import com.google.android.gms.tasks.OnCanceledListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 
 import org.json.JSONArray;
@@ -60,6 +68,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 
+
+
+
 import nweave.com.uberclient.R;
 
 import static com.google.android.gms.maps.model.JointType.ROUND;
@@ -71,9 +82,13 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
     Location userLocation;
     private FusedLocationProviderClient mFusedLocationClient;
     public static final int PLACE_AUTOCOMPLETE_REQUEST_CODE = 100;
-    private LatLng destination;
+    protected LatLng destination;
     private List<LatLng> listLatLng = new ArrayList<>();
     private Polyline blackPolyLine, greyPolyLine;
+
+
+    private int mNoOfCars = 0;
+    private RequestQueue mRequestQueue = null;
 
 
     @Override
@@ -146,17 +161,102 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
 
                             CameraPosition cameraPosition = new CameraPosition.Builder()
                                     .target(new LatLng(userLocation.getLatitude(), userLocation.getLongitude()))
-                                    .zoom(17)
+                                    .zoom(15)
                                     .build();
+
 
                             addOverlay(new LatLng(userLocation.getLatitude(), userLocation.getLongitude()));
                             mMap.moveCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+
+                            displayCarsNearMyLocation();
+
 
                         } else {
                             userLocation = null;
                         }
                     }
+                }).addOnCanceledListener(this, new OnCanceledListener() {
+            @Override
+            public void onCanceled() {
+               Toast.makeText(getApplicationContext(), "OnCanceledListener >>> onCanceled ", Toast.LENGTH_LONG).show();
+            }
+        })
+        ;
+    }
+
+
+    private void displayCarsNearMyLocation() {
+
+       // Utils.showProgressDialog(this, false);
+
+        // Instantiate the cache
+        Cache cache = new DiskBasedCache(getCacheDir(), 1024 * 1024); // 1MB cap
+
+        // Set up the network to use HttpURLConnection as the HTTP client.
+        Network network = new BasicNetwork(new HurlStack());
+
+        // Instantiate the RequestQueue with the cache and network.
+        mRequestQueue = new RequestQueue(cache, network);
+
+        // Start the queue
+        mRequestQueue.start();
+
+        String url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=" + userLocation.getLatitude() + "," + userLocation.getLongitude()
+                + "&radius=500&type=restaurant&key=" +getString(R.string.google_places_key);
+
+//        Log.d(Constants.TAG, "NearBySearch url: " + url);
+
+        JsonObjectRequest jsonObjectRequest = new JsonObjectRequest
+                (Request.Method.GET, url, null, new Response.Listener<JSONObject>() {
+
+                    @Override
+                    public void onResponse(JSONObject response) {
+//                        Utils.hideProgressDialog();
+                        try {
+                            if(response != null && response.has("results")) {
+                                JSONArray resultsArray = response.getJSONArray("results");
+
+                                mNoOfCars = resultsArray.length();
+
+                                if(mNoOfCars > 5) {
+                                    mNoOfCars = 5; //Limit to display only 5 cars max
+                                }
+
+                                for(int i = 0; i < mNoOfCars; i++) {
+                                    JSONObject resultObject = resultsArray.getJSONObject(i);
+                                    if(resultObject != null && resultObject.has("geometry")) {
+                                        JSONObject locationObject = resultObject.getJSONObject("geometry").getJSONObject("location");
+                                        Location location = new Location("");
+                                        location.setLatitude(locationObject.getDouble("lat"));
+                                        location.setLongitude(locationObject.getDouble("lng"));
+                                        addMarker(new LatLng(location.getLatitude(), location.getLongitude()), true);
+                                    }
+                                }
+
+//                                mLoadingView.setVisibility(View.GONE);
+//                                if(mNoOfCars == 0) {
+////                                    showSnackBar(getString(R.string.no_cars_available), false);
+//                                }
+                            }
+
+                        } catch(Exception e) {
+                            Log.e("", "NearBySearch Api error", e);
+                        }
+
+//                        showMarker(mCurrentLocation,true);//written after displayCars for NoOfCars
+                    }
+                }, new Response.ErrorListener() {
+                    @Override
+                    public void onErrorResponse(VolleyError error) {
+//                        Utils.hideProgressDialog();
+                        Log.e("", "NearBySearch Api volley error", error);
+
+//                        showMarker(mCurrentLocation,true);//written after displayCars for NoOfCars
+                    }
                 });
+
+        // Access the RequestQueue through your singleton class.
+        mRequestQueue.add(jsonObjectRequest);
     }
 
 
@@ -206,23 +306,6 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
             return null;
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == PLACE_AUTOCOMPLETE_REQUEST_CODE) {
-            if (resultCode == RESULT_OK) {
-                Place place = PlaceAutocomplete.getPlace(this, data);
-                destination = place.getLatLng();
-                setUpPolyLine();
-
-            } else if (resultCode == PlaceAutocomplete.RESULT_ERROR) {
-                Status status = PlaceAutocomplete.getStatus(this, data);
-                Toast.makeText(this, "Error " + status, Toast.LENGTH_SHORT).show();
-
-            } else if (resultCode == RESULT_CANCELED) {
-                // The user canceled the operation.
-            }
-        }
-    }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -237,11 +320,16 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
         }
     }
 
-    private void addMarker(LatLng destination) {
+    private void addMarker(LatLng destination, boolean isCarType) {
 
         MarkerOptions options = new MarkerOptions();
         options.position(destination);
-        options.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED));
+
+        if(isCarType){
+            options.icon(BitmapDescriptorFactory.fromResource(R.drawable.fake_car));
+        }else {
+            options.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE));
+        }
         mMap.addMarker(options);
 
     }
@@ -424,6 +512,7 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
                 points.add(position);
             }
 
+
             this.listLatLng.addAll(points);
         }
 
@@ -442,7 +531,34 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
         greyOptions.jointType(ROUND);
         greyPolyLine = mMap.addPolyline(greyOptions);
 
-        animatePolyLine();
+
+
+
+        LatLngBounds.Builder builder = new LatLngBounds.Builder();
+
+        for (LatLng latLng : points){
+            builder.include(latLng);
+        }
+        LatLngBounds bounds = builder.build();
+
+        int width = getResources().getDisplayMetrics().widthPixels;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        int padding = (int) (width * 0.10); // offset from edges of the map 10% of screen
+
+        CameraUpdate cu = CameraUpdateFactory.newLatLngBounds(bounds, width, height, padding);
+
+        mMap.animateCamera(cu, new GoogleMap.CancelableCallback() {
+            @Override
+            public void onFinish() {
+                animatePolyLine();
+            }
+
+            @Override
+            public void onCancel() {
+
+            }
+        });
+
     }
 
     private void animatePolyLine() {
@@ -477,7 +593,7 @@ public abstract class BaseActivity extends AppCompatActivity implements OnMapRea
         @Override
         public void onAnimationStart(Animator animator) {
 
-            addMarker(listLatLng.get(listLatLng.size()-1));
+            addMarker(listLatLng.get(listLatLng.size()-1), false);
         }
 
         @Override
